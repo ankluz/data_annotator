@@ -1,8 +1,78 @@
 import cv2
 import numpy as np
 from data_annotator.help_overlay import HelpOverlay
-import keyboard  # Add import at the beginning
 from data_annotator.file_processor import save_annotations
+import tkinter as tk
+from tkinter import ttk
+
+
+class SymbolInputDialog:
+    def __init__(self, current_symbol=""):
+        self.result = None
+        
+        # Создаем главное окно
+        self.root = tk.Tk()
+        self.root.title("Ввод символа")
+        
+        # Устанавливаем стиль
+        style = ttk.Style()
+        style.configure('Custom.TFrame', background='#f0f0f0')
+        style.configure('Custom.TLabel', background='#f0f0f0', font=('Arial', 10))
+        style.configure('Custom.TButton', font=('Arial', 10), padding=5)
+        style.configure('Custom.TEntry', font=('Arial', 10))
+        
+        # Устанавливаем положение окна по центру экрана
+        window_width = 300
+        window_height = 150
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        center_x = int(screen_width/2 - window_width/2)
+        center_y = int(screen_height/2 - window_height/2)
+        self.root.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
+        
+        # Настраиваем внешний вид окна
+        self.root.configure(bg='#f0f0f0')
+        self.root.resizable(False, False)
+        
+        # Создаем и размещаем элементы интерфейса
+        main_frame = ttk.Frame(self.root, padding="20", style='Custom.TFrame')
+        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        
+        ttk.Label(main_frame, text="Введите символ:", style='Custom.TLabel').grid(row=0, column=0, columnspan=2, pady=(0,10))
+        
+        self.entry = ttk.Entry(main_frame, width=40, style='Custom.TEntry')
+        self.entry.grid(row=1, column=0, columnspan=2, pady=(0,20))
+        self.entry.insert(0, current_symbol)
+        self.entry.focus()
+        
+        button_frame = ttk.Frame(main_frame, style='Custom.TFrame')
+        button_frame.grid(row=2, column=0, columnspan=2)
+        
+        ok_button = ttk.Button(button_frame, text="OK", command=self.ok_clicked, style='Custom.TButton', width=10)
+        ok_button.grid(row=0, column=0, padx=5)
+        
+        cancel_button = ttk.Button(button_frame, text="Отмена", command=self.cancel_clicked, style='Custom.TButton', width=10)
+        cancel_button.grid(row=0, column=1, padx=5)
+        
+        # Привязываем клавиши
+        self.root.bind('<Return>', lambda e: self.ok_clicked())
+        self.root.bind('<Escape>', lambda e: self.cancel_clicked())
+        self.root.protocol("WM_DELETE_WINDOW", self.cancel_clicked)
+        
+        # Делаем окно модальным
+        self.root.transient()
+        self.root.grab_set()
+        
+    def ok_clicked(self):
+        self.result = self.entry.get()
+        self.root.destroy()
+        
+    def cancel_clicked(self):
+        self.root.destroy()
+        
+    def show(self):
+        self.root.mainloop()
+        return self.result
 
 
 def annotate_keypoints(image_path, boxes_data, output_path=None):
@@ -54,8 +124,6 @@ def annotate_keypoints(image_path, boxes_data, output_path=None):
     running = True
     panning = False
     last_pan_pos = None
-    entering_symbol = False
-    symbol_input = ""
 
     current_sequence_idx = -1  # Index of current sequence
 
@@ -116,18 +184,14 @@ def annotate_keypoints(image_path, boxes_data, output_path=None):
     def on_mouse(event, x, y, flags, param):
         nonlocal zoom_scale, pan_offset, panning, last_pan_pos, current_sequence
         
-        # Don't process mouse events when entering symbol
-        if entering_symbol:
-            return
-            
         # Transform coordinates back to original image space
         orig_x = (x - pan_offset[0]) / zoom_scale
         orig_y = (y - pan_offset[1]) / zoom_scale
         
-        if event == cv2.EVENT_LBUTTONDOWN:
+        if event == cv2.EVENT_LBUTTONDOWN and not (flags & cv2.EVENT_FLAG_SHIFTKEY):
             current_sequence.append((int(orig_x), int(orig_y)))
         
-        elif event == cv2.EVENT_MBUTTONDOWN or (event == cv2.EVENT_LBUTTONDOWN and keyboard.is_pressed('shift')):
+        elif event == cv2.EVENT_MBUTTONDOWN or (event == cv2.EVENT_LBUTTONDOWN and (flags & cv2.EVENT_FLAG_SHIFTKEY)):
             panning = True
             last_pan_pos = (x, y)
             
@@ -159,178 +223,10 @@ def annotate_keypoints(image_path, boxes_data, output_path=None):
             panning = False
             last_pan_pos = None
 
-    def on_key_press(event):
-        nonlocal current_box_idx, current_sequence, all_sequences, running
-        nonlocal zoom_scale, pan_offset, annotations, current_sequence_idx
-        nonlocal show_help, entering_symbol, symbol_input, current_symbol
-
-        scan_code_mapping = {
-            49: 'n',     # n/т
-            44: 'z',     # z/я
-            32: 'd',     # d/в
-            30: 'a',     # a/ф
-            31: 's',     # s/ы
-            35: 'h',     # h/р
-            19: 'r',     # r/к
-            18: 'e',     # e/у
-            16: 'q',     # q/й
-            45: 'x',     # x/ч
-            20: 't',     # t/е
-        }
-        
-        # If entering a symbol, handle text input
-        if entering_symbol:
-            if event.scan_code == 1:  # ESC key
-                entering_symbol = False
-                symbol_input = ""
-                return
-            elif event.scan_code == 28:  # Enter key
-                current_symbol = symbol_input
-                annotations[current_box_idx] = (annotations[current_box_idx][0], annotations[current_box_idx][1], current_symbol)
-                entering_symbol = False
-                symbol_input = ""
-                print(f"Symbol set to: '{current_symbol}'")
-                return
-            elif event.scan_code == 14:  # Backspace key
-                symbol_input = symbol_input[:-1] if symbol_input else ""
-                return
-            elif event.name and len(event.name) == 1:  # Regular character
-                symbol_input += event.name
-                return
-            return
-        
-        actual_key = scan_code_mapping.get(event.scan_code, event.name)
-        
-        if actual_key == 't':  # Enter symbol mode
-            entering_symbol = True
-            symbol_input = current_symbol
-            return
-        
-        elif actual_key == 'n':  # New sequence
-            if current_sequence:  # Save current sequence if not empty
-                all_sequences.append(current_sequence[:])
-            current_sequence = []  # Start new sequence
-            current_sequence_idx = len(all_sequences)
-            print("Started new sequence")
-            
-        elif actual_key == 'e':  # Next sequence
-            if len(all_sequences) > 0:
-                # Save current sequence if it exists and we were editing an existing sequence
-                if current_sequence and 0 <= current_sequence_idx < len(all_sequences):
-                    all_sequences[current_sequence_idx] = current_sequence[:]
-                
-                # Move to next sequence
-                if current_sequence_idx < len(all_sequences) - 1:
-                    current_sequence_idx += 1
-                else:
-                    current_sequence_idx = 0
-                current_sequence = all_sequences[current_sequence_idx][:]
-                print(f"Editing sequence {current_sequence_idx}")
-                
-        elif actual_key == 'q':  # Previous sequence
-            if len(all_sequences) > 0:
-                # Save current sequence if it exists and we were editing an existing sequence
-                if current_sequence and 0 <= current_sequence_idx < len(all_sequences):
-                    all_sequences[current_sequence_idx] = current_sequence[:]
-                
-                # Move to previous sequence
-                if current_sequence_idx > 0:
-                    current_sequence_idx -= 1
-                else:
-                    current_sequence_idx = len(all_sequences) - 1
-                current_sequence = all_sequences[current_sequence_idx][:]
-                print(f"Editing sequence {current_sequence_idx}")
-                
-        elif actual_key == 'z':
-            if current_sequence:
-                current_sequence.pop()
-                # Если редактируем существующую последовательность, обновляем её
-                if current_sequence_idx >= 0 and current_sequence_idx < len(all_sequences):
-                    all_sequences[current_sequence_idx] = current_sequence[:]
-                print("Last point removed")
-            
-        elif actual_key == 'delete':  # Удаление текущей последовательности
-            if current_sequence_idx >= 0 and current_sequence_idx < len(all_sequences):
-                all_sequences.pop(current_sequence_idx)
-                if len(all_sequences) > 0:
-                    current_sequence_idx = min(current_sequence_idx, len(all_sequences) - 1)
-                    current_sequence = all_sequences[current_sequence_idx][:]
-                else:
-                    current_sequence = []
-                    current_sequence_idx = -1
-                print(f"Sequence {current_sequence_idx} deleted")
-        
-        elif actual_key == 'd':
-            # Save current sequence and move to next box
-            if current_sequence:
-                all_sequences.append(current_sequence[:])
-            current_box_idx = min(current_box_idx + 1, len(annotations) - 1)
-            current_sequence.clear()
-            current_sequence_idx = -1
-            all_sequences = annotations[current_box_idx][1]
-            current_symbol = annotations[current_box_idx][2] if len(annotations[current_box_idx]) > 2 else ""
-            zoom_scale = 1.0
-            pan_offset = [0, 0]
-            print(f"Moved to next box: {current_box_idx}")
-        
-        elif actual_key == 'a':
-            # Save current sequence and move to previous box
-            if current_sequence:
-                all_sequences.append(current_sequence[:])
-            current_box_idx = max(current_box_idx - 1, 0)
-            current_sequence.clear()
-            current_sequence_idx = -1
-            all_sequences = annotations[current_box_idx][1]
-            current_symbol = annotations[current_box_idx][2] if len(annotations[current_box_idx]) > 2 else ""
-            zoom_scale = 1.0
-            pan_offset = [0, 0]
-            print(f"Moved to previous box: {current_box_idx}")
-        
-        elif actual_key == 'h':
-            show_help = not show_help
-            print("Help toggled")
-        
-        elif actual_key == 's' and output_path:
-            if current_sequence:
-                all_sequences.append(current_sequence[:])
-            save_annotations(annotations, output_path)
-            print(f"Annotations saved to: {output_path}")
-        
-        elif actual_key == 'x':  # Delete current bbox
-            if len(annotations) > 0:
-                # Remove current bbox
-                annotations.pop(current_box_idx)
-                
-                if not annotations:  # If no boxes left
-                    running = False
-                    print("No boxes left to annotate")
-                    return
-                
-                # Adjust current_box_idx if needed
-                if current_box_idx >= len(annotations):
-                    current_box_idx = len(annotations) - 1
-                
-                # Reset current sequence and update all_sequences for new current box
-                current_sequence = []
-                current_sequence_idx = -1
-                all_sequences = annotations[current_box_idx][1]
-                current_symbol = annotations[current_box_idx][2] if len(annotations[current_box_idx]) > 2 else ""
-                zoom_scale = 1.0
-                pan_offset = [0, 0]
-                print(f"Bbox deleted. Moved to box: {current_box_idx}")
-
     # Setup window and callbacks
     window_name = "Keypoint Annotation"
     cv2.namedWindow(window_name)
     cv2.setMouseCallback(window_name, on_mouse)
-    
-    # Register keyboard handlers for specific scan codes
-    keys_to_monitor = [
-        'n', 'z', 'd', 'a', 's', 'h', 'r', 'x', 'delete', 'backspace', 'e', 'q', 't'  # Added 't' for text entry
-    ]
-    
-    for key in keys_to_monitor:
-        keyboard.on_press_key(key, on_key_press, suppress=True)
 
     while running and current_box_idx < len(annotations):
         box = annotations[current_box_idx][0]
@@ -340,7 +236,6 @@ def annotate_keypoints(image_path, boxes_data, output_path=None):
         y = int(float(box[1]))
         w = int(float(box[2]))
         h = int(float(box[3]))
-        
         
         # Extract and resize box region
         box_img = image[y:y+h, x:x+w].copy()
@@ -376,26 +271,116 @@ def annotate_keypoints(image_path, boxes_data, output_path=None):
                 prev_y = int(current_sequence[i-1][1] * zoom_scale + pan_offset[1])
                 cv2.line(display_img, (prev_x, prev_y), (screen_x, screen_y), (0, 0, 255), 1)
         
-        # Display current symbol or prompt
-        if entering_symbol:
-            prompt_text = f"Enter symbol: {symbol_input}_"
-            cv2.rectangle(display_img, (10, 10), (300, 40), (0, 0, 0), -1)
-            cv2.putText(display_img, prompt_text, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-        else:
-            if current_symbol:
-                symbol_text = f"Symbol: '{current_symbol}'"
-                cv2.rectangle(display_img, (10, 10), (200, 40), (0, 0, 0), -1)
-                cv2.putText(display_img, symbol_text, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+        # Display current symbol
+        if current_symbol:
+            symbol_text = f"Symbol: '{current_symbol}'"
+            # Создаем фон с прозрачностью
+            overlay = display_img.copy()
+            cv2.rectangle(overlay, (10, 10), (max(200, len(symbol_text) * 12), 40), (0, 0, 0), -1)
+            # Применяем прозрачность
+            alpha = 0.7
+            display_img = cv2.addWeighted(overlay, alpha, display_img, 1 - alpha, 0)
+            # Добавляем текст
+            cv2.putText(display_img, symbol_text, (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
         
         # Draw help overlay
         display_img = draw_help(display_img)
         
         cv2.imshow(window_name, display_img)
-        if cv2.waitKey(1) == 27:  # ESC key
+        
+        key = cv2.waitKey(1) & 0xFF
+        
+        if key == 27:  # ESC
             running = False
+        elif key == ord('t'):  # Enter symbol mode
+            dialog = SymbolInputDialog(current_symbol)
+            result = dialog.show()
+            if result is not None:
+                current_symbol = result
+                annotations[current_box_idx] = (annotations[current_box_idx][0], annotations[current_box_idx][1], current_symbol)
+                print(f"Symbol set to: '{current_symbol}'")
+        elif key == ord('n'):  # New sequence
+            if current_sequence:
+                all_sequences.append(current_sequence[:])
+            current_sequence = []
+            current_sequence_idx = len(all_sequences)
+            print("Started new sequence")
+        elif key == ord('e'):  # Next sequence
+            if len(all_sequences) > 0:
+                if current_sequence and 0 <= current_sequence_idx < len(all_sequences):
+                    all_sequences[current_sequence_idx] = current_sequence[:]
+                if current_sequence_idx < len(all_sequences) - 1:
+                    current_sequence_idx += 1
+                else:
+                    current_sequence_idx = 0
+                current_sequence = all_sequences[current_sequence_idx][:]
+                print(f"Editing sequence {current_sequence_idx}")
+        elif key == ord('q'):  # Previous sequence
+            if len(all_sequences) > 0:
+                if current_sequence and 0 <= current_sequence_idx < len(all_sequences):
+                    all_sequences[current_sequence_idx] = current_sequence[:]
+                if current_sequence_idx > 0:
+                    current_sequence_idx -= 1
+                else:
+                    current_sequence_idx = len(all_sequences) - 1
+                current_sequence = all_sequences[current_sequence_idx][:]
+                print(f"Editing sequence {current_sequence_idx}")
+        elif key == ord('z'):  # Undo last keypoint
+            if current_sequence:
+                current_sequence.pop()
+                if current_sequence_idx >= 0 and current_sequence_idx < len(all_sequences):
+                    all_sequences[current_sequence_idx] = current_sequence[:]
+                print("Last point removed")
+        elif key == ord('d'):  # Next box
+            if current_sequence:
+                all_sequences.append(current_sequence[:])
+            current_box_idx = min(current_box_idx + 1, len(annotations) - 1)
+            current_sequence = []
+            current_sequence_idx = -1
+            all_sequences = annotations[current_box_idx][1]
+            current_symbol = annotations[current_box_idx][2] if len(annotations[current_box_idx]) > 2 else ""
+            zoom_scale = 1.0
+            pan_offset = [0, 0]
+            print(f"Moved to next box: {current_box_idx}")
+        elif key == ord('a'):  # Previous box
+            if current_sequence:
+                all_sequences.append(current_sequence[:])
+            current_box_idx = max(current_box_idx - 1, 0)
+            current_sequence = []
+            current_sequence_idx = -1
+            all_sequences = annotations[current_box_idx][1]
+            current_symbol = annotations[current_box_idx][2] if len(annotations[current_box_idx]) > 2 else ""
+            zoom_scale = 1.0
+            pan_offset = [0, 0]
+            print(f"Moved to previous box: {current_box_idx}")
+        elif key == ord('h'):  # Toggle help
+            show_help = not show_help
+            print("Help toggled")
+        elif key == ord('s') and output_path:  # Save annotations
+            if current_sequence:
+                all_sequences.append(current_sequence[:])
+            save_annotations(annotations, output_path)
+            print(f"Annotations saved to: {output_path}")
+        elif key == ord('x'):  # Delete current bbox
+            if len(annotations) > 0:
+                annotations.pop(current_box_idx)
+                if not annotations:
+                    running = False
+                    print("No boxes left to annotate")
+                    continue
+                if current_box_idx >= len(annotations):
+                    current_box_idx = len(annotations) - 1
+                current_sequence = []
+                current_sequence_idx = -1
+                all_sequences = annotations[current_box_idx][1]
+                current_symbol = annotations[current_box_idx][2] if len(annotations[current_box_idx]) > 2 else ""
+                zoom_scale = 1.0
+                pan_offset = [0, 0]
+                print(f"Bbox deleted. Moved to box: {current_box_idx}")
+        elif key == ord('r'):  # Reset view
+            zoom_scale = 1.0
+            pan_offset = [0, 0]
+            print("View reset")
 
-    # Cleanup
-    keyboard.unhook_all()
     cv2.destroyAllWindows()
-    
     return annotations
